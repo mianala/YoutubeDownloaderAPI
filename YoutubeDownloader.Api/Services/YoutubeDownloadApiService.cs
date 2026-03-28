@@ -1,9 +1,12 @@
+using System.IO.Compression;
+using System.Text;
 using Microsoft.AspNetCore.WebUtilities;
 using YoutubeDownloader.Api.Models;
 using YoutubeDownloader.Core.Downloading;
 using YoutubeDownloader.Core.Resolving;
 using YoutubeExplode;
 using YoutubeExplode.Videos;
+using YoutubeExplode.Videos.ClosedCaptions;
 using YoutubeExplode.Videos.Streams;
 
 namespace YoutubeDownloader.Api.Services;
@@ -47,60 +50,166 @@ public sealed class YoutubeDownloadApiService
 
     public async Task<PreparedDownload> PrepareDownloadAsync(
         string videoId,
-        string container,
+        string? container,
         string? quality,
+        bool audioOnly = false,
+        bool includeSrt = true,
+        bool includeDescription = true,
+        string? subtitleLanguage = null,
         CancellationToken cancellationToken = default
     )
     {
-        var selection = await SelectDownloadAsync(videoId, container, quality, cancellationToken);
+        var selection = await SelectDownloadAsync(
+            videoId,
+            container,
+            quality,
+            audioOnly,
+            cancellationToken
+        );
 
         using var downloader = new VideoDownloader();
 
-        var tempPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.{selection.Container.Name}");
+        if (!includeSrt && !includeDescription)
+        {
+            var tempPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.{selection.Container.Name}");
+            await downloader.DownloadVideoAsync(
+                tempPath,
+                selection.Video,
+                selection.Option,
+                includeSubtitles: false,
+                cancellationToken: cancellationToken
+            );
+
+            return new PreparedDownload(
+                tempPath,
+                selection.FileName,
+                selection.ContentType,
+                selection.Container.Name,
+                selection.Option.IsAudioOnly,
+                selection.Option.VideoQuality?.Label,
+                false,
+                false,
+                false
+            );
+        }
+
+        var workDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(workDir);
+
+        var mediaPath = Path.Combine(workDir, selection.FileName);
         await downloader.DownloadVideoAsync(
-            tempPath,
+            mediaPath,
             selection.Video,
             selection.Option,
             includeSubtitles: false,
             cancellationToken: cancellationToken
         );
 
-        return new PreparedDownload(tempPath, selection.FileName, selection.ContentType);
+        var addedSrt = false;
+        if (includeSrt)
+        {
+            var subtitlePath = Path.Combine(
+                workDir,
+                $"{Path.GetFileNameWithoutExtension(selection.FileName)}.srt"
+            );
+
+            await DownloadSubtitleAsync(
+                selection.Video.Id,
+                subtitlePath,
+                subtitleLanguage,
+                cancellationToken
+            );
+
+            addedSrt = true;
+        }
+
+        var addedDescription = false;
+        if (includeDescription && selection.Video is Video { Description: { Length: > 0 } description })
+        {
+            var descriptionPath = Path.Combine(workDir, "description.txt");
+            await File.WriteAllTextAsync(descriptionPath, description, Encoding.UTF8, cancellationToken);
+            addedDescription = true;
+        }
+
+        var archiveName = $"{Path.GetFileNameWithoutExtension(selection.FileName)}.zip";
+        var archivePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.zip");
+        ZipFile.CreateFromDirectory(workDir, archivePath);
+        Directory.Delete(workDir, recursive: true);
+
+        return new PreparedDownload(
+            archivePath,
+            archiveName,
+            "application/zip",
+            selection.Container.Name,
+            selection.Option.IsAudioOnly,
+            selection.Option.VideoQuality?.Label,
+            addedSrt,
+            addedDescription,
+            true
+        );
     }
 
     public async Task<DownloadLinkResponse> GetDownloadLinkAsync(
         string videoId,
-        string container,
+        string? container,
         string? quality,
+        bool audioOnly = false,
+        bool includeSrt = true,
+        bool includeDescription = true,
+        string? subtitleLanguage = null,
         CancellationToken cancellationToken = default
     )
     {
-        var selection = await SelectDownloadAsync(videoId, container, quality, cancellationToken);
+        var selection = await SelectDownloadAsync(
+            videoId,
+            container,
+            quality,
+            audioOnly,
+            cancellationToken
+        );
+
+        var isArchive = includeSrt || includeDescription;
+        var fileName = isArchive
+            ? $"{Path.GetFileNameWithoutExtension(selection.FileName)}.zip"
+            : selection.FileName;
+        var contentType = isArchive ? "application/zip" : selection.ContentType;
 
         return new DownloadLinkResponse(
-            BuildDownloadRelativeUrl(videoId, selection.Container.Name, selection.Option.VideoQuality?.Label ?? quality),
-            selection.FileName,
-            selection.ContentType,
+            BuildDownloadRelativeUrl(
+                videoId,
+                selection.Container.Name,
+                selection.Option.VideoQuality?.Label ?? quality,
+                audioOnly,
+                includeSrt,
+                includeDescription,
+                subtitleLanguage
+            ),
+            fileName,
+            contentType,
             selection.Container.Name,
             selection.Option.IsAudioOnly,
-            selection.Option.VideoQuality?.Label
+            selection.Option.VideoQuality?.Label,
+            includeSrt,
+            includeDescription,
+            isArchive
         );
     }
 
     private async Task<SelectedDownload> SelectDownloadAsync(
         string videoId,
-        string container,
+        string? container,
         string? quality,
+        bool audioOnly,
         CancellationToken cancellationToken
     )
     {
         var parsedId = ParseVideoId(videoId);
-        var targetContainer = ParseContainer(container);
+        var targetContainer = ResolveRequestedContainer(container, audioOnly);
 
         using var downloader = new VideoDownloader();
         var options = await downloader.GetDownloadOptionsAsync(parsedId, cancellationToken: cancellationToken);
 
-        var option = ResolveDownloadOption(options, targetContainer, quality);
+        var option = ResolveDownloadOption(options, targetContainer, quality, audioOnly);
         if (option is null)
             throw new KeyNotFoundException("No matching download option found.");
 
@@ -129,39 +238,121 @@ public sealed class YoutubeDownloadApiService
         }
     }
 
+    private static Container ResolveRequestedContainer(string? container, bool audioOnly) =>
+        !string.IsNullOrWhiteSpace(container)
+            ? ParseContainer(container)
+            : audioOnly
+                ? Container.Mp3
+                : Container.Mp4;
+
     private static VideoDownloadOption? ResolveDownloadOption(
         IReadOnlyList<VideoDownloadOption> options,
         Container targetContainer,
-        string? quality
+        string? quality,
+        bool audioOnly
     )
     {
+        var matchingContainerOptions = options
+            .Where(o => o.Container == targetContainer && (!audioOnly || o.IsAudioOnly))
+            .ToArray();
+
         if (!string.IsNullOrWhiteSpace(quality))
         {
-            var startsWithMatch = options.FirstOrDefault(o =>
-                o.Container == targetContainer &&
+            var startsWithMatch = matchingContainerOptions.FirstOrDefault(o =>
                 o.VideoQuality?.Label?.StartsWith(quality, StringComparison.OrdinalIgnoreCase) == true
             );
 
-            return startsWithMatch ?? options.FirstOrDefault(o =>
-                o.Container == targetContainer &&
+            return startsWithMatch ?? matchingContainerOptions.FirstOrDefault(o =>
                 string.Equals(o.VideoQuality?.Label, quality, StringComparison.OrdinalIgnoreCase)
             );
         }
 
-        return options
-            .Where(o => o.Container == targetContainer)
+        return matchingContainerOptions
             .OrderByDescending(o => o.VideoQuality)
             .FirstOrDefault();
     }
 
-    private static string BuildDownloadRelativeUrl(string videoId, string container, string? quality)
+    private static string BuildDownloadRelativeUrl(
+        string videoId,
+        string container,
+        string? quality,
+        bool audioOnly,
+        bool includeSrt,
+        bool includeDescription,
+        string? subtitleLanguage
+    )
     {
         var query = new Dictionary<string, string?> { ["container"] = container };
         if (!string.IsNullOrWhiteSpace(quality))
             query["quality"] = quality;
+        if (audioOnly)
+            query["audioOnly"] = "true";
+        if (includeSrt)
+            query["includeSrt"] = "true";
+        if (includeDescription)
+            query["includeDescription"] = "true";
+        if (!string.IsNullOrWhiteSpace(subtitleLanguage))
+            query["subtitleLanguage"] = subtitleLanguage;
 
-        return QueryHelpers.AddQueryString($"/api/videos/{videoId}/download", query);
+        var path = audioOnly ? $"/api/audio/{videoId}" : $"/api/videos/{videoId}/download";
+        return QueryHelpers.AddQueryString(path, query);
     }
+
+    private static async Task DownloadSubtitleAsync(
+        VideoId videoId,
+        string subtitlePath,
+        string? subtitleLanguage,
+        CancellationToken cancellationToken
+    )
+    {
+        using var youtube = new YoutubeClient();
+        var manifest = await youtube.Videos.ClosedCaptions.GetManifestAsync(videoId, cancellationToken);
+        var trackInfo = SelectSubtitleTrack(manifest, subtitleLanguage);
+        if (trackInfo is null)
+            throw new KeyNotFoundException("No subtitle track found.");
+
+        var track = await youtube.Videos.ClosedCaptions.GetAsync(trackInfo, cancellationToken);
+
+        await using var stream = File.Create(subtitlePath);
+        await using var writer = new StreamWriter(stream, new UTF8Encoding(false));
+
+        for (var i = 0; i < track.Captions.Count; i++)
+        {
+            var caption = track.Captions[i];
+            await writer.WriteLineAsync((i + 1).ToString());
+            await writer.WriteLineAsync(
+                $"{FormatSrtTime(caption.Offset)} --> {FormatSrtTime(caption.Offset + caption.Duration)}"
+            );
+            await writer.WriteLineAsync(caption.Text);
+            await writer.WriteLineAsync();
+        }
+    }
+
+    private static ClosedCaptionTrackInfo? SelectSubtitleTrack(
+        ClosedCaptionManifest manifest,
+        string? subtitleLanguage
+    )
+    {
+        if (!string.IsNullOrWhiteSpace(subtitleLanguage))
+        {
+            var exact = manifest.TryGetByLanguage(subtitleLanguage);
+            if (exact is not null)
+                return exact;
+
+            return manifest.Tracks.FirstOrDefault(t =>
+                string.Equals(t.Language.Code, subtitleLanguage, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(t.Language.Name, subtitleLanguage, StringComparison.OrdinalIgnoreCase)
+            );
+        }
+
+        return manifest.Tracks
+            .OrderBy(t => t.IsAutoGenerated)
+            .ThenBy(t => t.Language.Code, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+    }
+
+    private static string FormatSrtTime(TimeSpan time) =>
+        $"{(int)time.TotalHours:00}:{time.Minutes:00}:{time.Seconds:00},{time.Milliseconds:000}";
 
     private static string GetContentType(string container, bool isAudioOnly) =>
         container.ToLowerInvariant() switch
@@ -184,4 +375,14 @@ public sealed class YoutubeDownloadApiService
     );
 }
 
-public sealed record PreparedDownload(string TempPath, string FileName, string ContentType);
+public sealed record PreparedDownload(
+    string TempPath,
+    string FileName,
+    string ContentType,
+    string Container,
+    bool IsAudioOnly,
+    string? VideoQuality,
+    bool IncludesSrt,
+    bool IncludesDescription,
+    bool IsArchive
+);

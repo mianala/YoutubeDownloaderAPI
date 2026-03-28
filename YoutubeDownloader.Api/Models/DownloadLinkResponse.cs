@@ -6,5 +6,8 @@ public record DownloadLinkResponse(
     string ContentType,
     string Container,
     bool IsAudioOnly,
-    string? VideoQuality
+    string? VideoQuality,
+    bool IncludesSrt,
+    bool IncludesDescription,
+    bool IsArchive
 );

@@ -14,6 +14,7 @@ The upstream project provides the core YouTube download logic and desktop app. T
 ## API Endpoints
 
 - REST API: `/api/...`
+- Dedicated audio download route: `/api/audio/{videoId}`
 - OpenAPI JSON: `/openapi/v1.json`
 - Swagger UI: `/swagger`
 - MCP: `/mcp`
@@ -24,7 +25,9 @@ The upstream project provides the core YouTube download logic and desktop app. T
 
 - Resolve a YouTube URL or search query into videos
 - List available download options for a video
-- Download a video or audio file over HTTP
+- Download a video over HTTP
+- Download audio through `/api/audio/{videoId}`
+- Optionally package downloads with an `.srt` subtitle file and `description.txt`
 - Access the same core capabilities through MCP tools
 
 ## Upstream Project
