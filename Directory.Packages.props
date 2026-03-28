@@ -22,8 +22,11 @@
     <PackageVersion Include="Material.Avalonia" Version="3.9.2" />
     <PackageVersion Include="Material.Avalonia.DataGrid" Version="3.9.2" />
     <PackageVersion Include="Material.Icons.Avalonia" Version="2.2.0" />
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.5" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="9.0.3" />
+    <PackageVersion Include="ModelContextProtocol.AspNetCore" Version="1.1.0" />
     <PackageVersion Include="Onova" Version="2.6.13" />
+    <PackageVersion Include="Swashbuckle.AspNetCore" Version="10.1.5" />
     <PackageVersion Include="TagLibSharp" Version="2.3.0" />
     <PackageVersion Include="WebView.Avalonia" Version="11.0.0.1" />
     <PackageVersion Include="WebView.Avalonia.Desktop" Version="11.0.0.1" />
