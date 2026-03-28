@@ -33,10 +33,17 @@ public class QueryResolver(IReadOnlyList<Cookie>? initialCookies = null) : IDisp
         if (isPersonalSystemPlaylist && !_isAuthenticated)
             return null;
 
-        var playlist = await _youtube.Playlists.GetAsync(playlistId, cancellationToken);
-        var videos = await _youtube.Playlists.GetVideosAsync(playlistId, cancellationToken);
+        try
+        {
+            var playlist = await _youtube.Playlists.GetAsync(playlistId, cancellationToken);
+            var videos = await _youtube.Playlists.GetVideosAsync(playlistId, cancellationToken);
 
-        return new QueryResult(QueryResultKind.Playlist, $"Playlist: {playlist.Title}", videos);
+            return new QueryResult(QueryResultKind.Playlist, $"Playlist: {playlist.Title}", videos);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private async Task<QueryResult?> TryResolveVideoAsync(
