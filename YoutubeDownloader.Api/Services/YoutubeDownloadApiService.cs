@@ -1,17 +1,19 @@
 using System.IO.Compression;
 using System.Text;
+using Gress;
 using Microsoft.AspNetCore.WebUtilities;
 using YoutubeDownloader.Api.Models;
 using YoutubeDownloader.Core.Downloading;
 using YoutubeDownloader.Core.Resolving;
 using YoutubeExplode;
+using YoutubeExplode.Exceptions;
 using YoutubeExplode.Videos;
 using YoutubeExplode.Videos.ClosedCaptions;
 using YoutubeExplode.Videos.Streams;
 
 namespace YoutubeDownloader.Api.Services;
 
-public sealed class YoutubeDownloadApiService
+public sealed class YoutubeDownloadApiService(DownloadProgressTracker progressTracker)
 {
     public async Task<ResolveResponse> ResolveAsync(string query, CancellationToken cancellationToken = default)
     {
@@ -56,9 +58,13 @@ public sealed class YoutubeDownloadApiService
         bool includeSrt = true,
         bool includeDescription = true,
         string? subtitleLanguage = null,
+        string? progressId = null,
         CancellationToken cancellationToken = default
     )
     {
+        if (!string.IsNullOrWhiteSpace(progressId))
+            progressTracker.Start(progressId, "Preparing download...");
+
         var selection = await SelectDownloadAsync(
             videoId,
             container,
@@ -68,6 +74,7 @@ public sealed class YoutubeDownloadApiService
         );
 
         using var downloader = new VideoDownloader();
+        var warnings = new List<string>();
 
         if (!includeSrt && !includeDescription)
         {
@@ -77,8 +84,12 @@ public sealed class YoutubeDownloadApiService
                 selection.Video,
                 selection.Option,
                 includeSubtitles: false,
+                progress: CreateProgressReporter(progressId, 0, 1, selection.FileName, "Downloading media..."),
                 cancellationToken: cancellationToken
             );
+
+            if (!string.IsNullOrWhiteSpace(progressId))
+                progressTracker.Complete(progressId, selection.FileName, warnings);
 
             return new PreparedDownload(
                 tempPath,
@@ -89,7 +100,8 @@ public sealed class YoutubeDownloadApiService
                 selection.Option.VideoQuality?.Label,
                 false,
                 false,
-                false
+                false,
+                warnings
             );
         }
 
@@ -102,6 +114,7 @@ public sealed class YoutubeDownloadApiService
             selection.Video,
             selection.Option,
             includeSubtitles: false,
+            progress: CreateProgressReporter(progressId, 0, 0.85, selection.FileName, "Downloading media..."),
             cancellationToken: cancellationToken
         );
 
@@ -113,14 +126,32 @@ public sealed class YoutubeDownloadApiService
                 $"{Path.GetFileNameWithoutExtension(selection.FileName)}.srt"
             );
 
-            await DownloadSubtitleAsync(
-                selection.Video.Id,
-                subtitlePath,
-                subtitleLanguage,
-                cancellationToken
-            );
+            try
+            {
+                ReportProgress(progressId, "downloading-subtitles", 0.9, "Downloading subtitles...", selection.FileName);
+                await DownloadSubtitleAsync(
+                    selection.Video.Id,
+                    subtitlePath,
+                    subtitleLanguage,
+                    cancellationToken
+                );
 
-            addedSrt = true;
+                addedSrt = true;
+            }
+            catch (RequestLimitExceededException)
+            {
+                const string warning = "Subtitles were skipped because YouTube rate-limited caption requests.";
+                warnings.Add(warning);
+                if (!string.IsNullOrWhiteSpace(progressId))
+                    progressTracker.AddWarning(progressId, warning);
+            }
+            catch (KeyNotFoundException)
+            {
+                const string warning = "Subtitles were requested but no matching subtitle track was found.";
+                warnings.Add(warning);
+                if (!string.IsNullOrWhiteSpace(progressId))
+                    progressTracker.AddWarning(progressId, warning);
+            }
         }
 
         var addedDescription = false;
@@ -131,10 +162,14 @@ public sealed class YoutubeDownloadApiService
             addedDescription = true;
         }
 
+        ReportProgress(progressId, "packaging", 0.97, "Packaging download...", selection.FileName);
         var archiveName = $"{Path.GetFileNameWithoutExtension(selection.FileName)}.zip";
         var archivePath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.zip");
         ZipFile.CreateFromDirectory(workDir, archivePath);
         Directory.Delete(workDir, recursive: true);
+
+        if (!string.IsNullOrWhiteSpace(progressId))
+            progressTracker.Complete(progressId, archiveName, warnings);
 
         return new PreparedDownload(
             archivePath,
@@ -145,7 +180,8 @@ public sealed class YoutubeDownloadApiService
             selection.Option.VideoQuality?.Label,
             addedSrt,
             addedDescription,
-            true
+            true,
+            warnings
         );
     }
 
@@ -157,6 +193,7 @@ public sealed class YoutubeDownloadApiService
         bool includeSrt = true,
         bool includeDescription = true,
         string? subtitleLanguage = null,
+        string? progressId = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -182,7 +219,8 @@ public sealed class YoutubeDownloadApiService
                 audioOnly,
                 includeSrt,
                 includeDescription,
-                subtitleLanguage
+                subtitleLanguage,
+                progressId
             ),
             fileName,
             contentType,
@@ -279,7 +317,8 @@ public sealed class YoutubeDownloadApiService
         bool audioOnly,
         bool includeSrt,
         bool includeDescription,
-        string? subtitleLanguage
+        string? subtitleLanguage,
+        string? progressId
     )
     {
         var query = new Dictionary<string, string?> { ["container"] = container };
@@ -293,9 +332,44 @@ public sealed class YoutubeDownloadApiService
             query["includeDescription"] = "true";
         if (!string.IsNullOrWhiteSpace(subtitleLanguage))
             query["subtitleLanguage"] = subtitleLanguage;
+        if (!string.IsNullOrWhiteSpace(progressId))
+            query["progressId"] = progressId;
 
         var path = audioOnly ? $"/api/audio/{videoId}" : $"/api/videos/{videoId}/download";
         return QueryHelpers.AddQueryString(path, query);
+    }
+
+    private IProgress<Percentage>? CreateProgressReporter(
+        string? progressId,
+        double start,
+        double end,
+        string fileName,
+        string message
+    )
+    {
+        if (string.IsNullOrWhiteSpace(progressId))
+            return null;
+
+        return new Progress<Percentage>(percentage =>
+        {
+            var fraction = percentage.Fraction;
+            var progress = start + ((end - start) * fraction);
+            progressTracker.Report(progressId, "downloading-media", progress, message, fileName);
+        });
+    }
+
+    private void ReportProgress(
+        string? progressId,
+        string status,
+        double progress,
+        string message,
+        string? fileName = null
+    )
+    {
+        if (string.IsNullOrWhiteSpace(progressId))
+            return;
+
+        progressTracker.Report(progressId, status, progress, message, fileName);
     }
 
     private static async Task DownloadSubtitleAsync(
@@ -385,4 +459,6 @@ public sealed record PreparedDownload(
     bool IncludesSrt,
     bool IncludesDescription,
     bool IsArchive
+    ,
+    IReadOnlyList<string> Warnings
 );

@@ -21,4 +21,7 @@ public sealed class DownloadRequest
 
     [Description("Optional subtitle language code or language name to use when generating the .srt file, for example 'en'.")]
     public string? SubtitleLanguage { get; init; }
+
+    [Description("Optional client-generated ID used to poll /api/downloads/progress/{progressId} while the file is being prepared.")]
+    public string? ProgressId { get; init; }
 }

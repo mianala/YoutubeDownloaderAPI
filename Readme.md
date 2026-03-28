@@ -18,6 +18,7 @@ The upstream project provides the core YouTube download logic and desktop app. T
 - OpenAPI JSON: `/openapi/v1.json`
 - Swagger UI: `/swagger`
 - MCP: `/mcp`
+- Download progress polling: `/api/downloads/progress/{progressId}`
 
 `/` and `/openapi` redirect to Swagger UI for easier local testing.
 
@@ -28,6 +29,7 @@ The upstream project provides the core YouTube download logic and desktop app. T
 - Download a video over HTTP
 - Download audio through `/api/audio/{videoId}`
 - Optionally package downloads with an `.srt` subtitle file and `description.txt`
+- Track preparation progress by passing `progressId` and polling `/api/downloads/progress/{progressId}`
 - Access the same core capabilities through MCP tools
 
 ## Upstream Project

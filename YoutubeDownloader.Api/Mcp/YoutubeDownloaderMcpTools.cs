@@ -38,6 +38,8 @@ public sealed class YoutubeDownloaderMcpTools
         bool includeDescription,
         [Description("Optional subtitle language code or language name to use for the generated .srt file, for example 'en'.")]
         string? subtitleLanguage,
+        [Description("Optional client-generated ID used to poll the HTTP progress endpoint while the file is being prepared.")]
+        string? progressId,
         CancellationToken cancellationToken
     ) => service.GetDownloadLinkAsync(
         videoId,
@@ -47,6 +49,7 @@ public sealed class YoutubeDownloaderMcpTools
         includeSrt,
         includeDescription,
         subtitleLanguage,
+        progressId,
         cancellationToken
     );
 }
