@@ -22,6 +22,19 @@ The upstream project provides the core YouTube download logic and desktop app. T
 
 `/` and `/openapi` redirect to Swagger UI for easier local testing.
 
+## Run The API
+
+Start the API server from the repository root with:
+
+```bash
+dotnet run --project YoutubeDownloader.Api
+```
+
+Then open:
+
+- Swagger UI: `http://localhost:5000/swagger`
+- OpenAPI JSON: `http://localhost:5000/openapi/v1.json`
+
 ## What The API Exposes
 
 - Resolve a YouTube URL or search query into videos
