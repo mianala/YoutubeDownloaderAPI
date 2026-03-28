@@ -26,6 +26,18 @@ It also supports searching by keywords, which is helpful if you want to quickly 
 > This application uses [**YoutubeExplode**](https://github.com/Tyrrrz/YoutubeExplode) under the hood to interact with YouTube.
 > You can [read this article](https://tyrrrz.me/blog/reverse-engineering-youtube-revisited) to learn more about how it works.
 
+## API surfaces
+
+The repository also includes a lightweight ASP.NET Core API project in [YoutubeDownloader.Api](./YoutubeDownloader.Api) with HTTP, OpenAPI, Swagger UI, and MCP endpoints.
+
+- HTTP API endpoints are exposed under `/api/...`
+- OpenAPI JSON is exposed at `/openapi/v1.json`
+- Swagger UI is exposed at `/swagger`
+- `/` and `/openapi` redirect to Swagger UI for easier local testing
+- MCP HTTP transport is exposed at `/mcp`
+
+The Swagger UI supports trying requests directly in the browser, while the MCP server exposes query resolution and download option tools for MCP-compatible clients.
+
 ## Terms of use<sup>[[?]](https://github.com/Tyrrrz/.github/blob/prime/docs/why-so-political.md)</sup>
 
 By using this project or its source code, for any purpose and in any shape or form, you grant your **implicit agreement** to all the following statements:
