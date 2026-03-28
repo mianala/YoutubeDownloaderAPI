@@ -58,7 +58,7 @@ public static class DownloadEndpoints
 
             // Download to a temp file
             var tempPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.{container}");
-            await downloader.DownloadVideoAsync(tempPath, video, option, cancellationToken: ct);
+            await downloader.DownloadVideoAsync(tempPath, video, option, includeSubtitles: false, cancellationToken: ct);
 
             // Sanitize filename
             var safeTitle = string.Join("_", video.Title.Split(Path.GetInvalidFileNameChars()));
